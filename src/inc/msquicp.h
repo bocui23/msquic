@@ -20,6 +20,13 @@ Abstract:
 extern "C" {
 #endif
 
+#define QUIC_BATCH_CRYPTO_HP
+//#define QUIC_BYPASS_CRYPTO
+//#define QUIC_BYPASS_HP
+
+//#define dbg_printf(...) printf(__VA_ARGS__)
+#define dbg_printf(...)
+
 typedef struct CXPLAT_RECV_DATA CXPLAT_RECV_DATA;
 typedef struct CXPLAT_SEND_DATA CXPLAT_SEND_DATA;
 

@@ -27,6 +27,13 @@ QuicFuzzInjectHook(
 
 #endif
 
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicPacketBuilderCryptoBatch(
+    _Inout_ QUIC_PACKET_BUILDER *Builder
+    );
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 void
 QuicPacketBuilderSendBatch(
@@ -631,6 +638,7 @@ QuicPacketBuilderFinalizeHeaderProtection(
 {
     CXPLAT_DBG_ASSERT(Builder->Key != NULL);
 
+#ifndef QUIC_BYPASS_HP
     QUIC_STATUS Status;
     if (QUIC_FAILED(
         Status =
@@ -643,6 +651,9 @@ QuicPacketBuilderFinalizeHeaderProtection(
         QuicConnFatalError(Builder->Connection, Status, "HP failure");
         return;
     }
+#else
+    CxPlatCopyMemory(Builder->HpMask, Builder->CipherBatch, Builder->BatchCount * CXPLAT_HP_SAMPLE_LENGTH);
+#endif
 
     for (uint8_t i = 0; i < Builder->BatchCount; ++i) {
         uint16_t Offset = i * CXPLAT_HP_SAMPLE_LENGTH;
@@ -809,17 +820,35 @@ QuicPacketBuilderFinalize(
         QuicCryptoCombineIvAndPacketNumber(Builder->Key->Iv, (uint8_t*) &Builder->Metadata->PacketNumber, Iv);
 
         QUIC_STATUS Status;
-        if (QUIC_FAILED(
-            Status =
-            CxPlatEncrypt(
-                Builder->Key->PacketKey,
-                Iv,
-                Builder->HeaderLength,
-                Header,
-                PayloadLength,
-                Payload))) {
-            QuicConnFatalError(Connection, Status, "Encryption failure");
-            goto Exit;
+
+
+#ifdef QUIC_BATCH_CRYPTO_HP
+        // stash 1-rtt packets into a batch crypto, valid for short header type only
+        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+        {
+            uint32_t BatchIdx = Builder->BCQuicAmount++;
+            Builder->BCQuicHdr[BatchIdx] = Header;
+            Builder->BCQuicPayload[BatchIdx] = Payload;
+            Builder->BCQuicPayloadLength[BatchIdx] = PayloadLength;
+            CxPlatCopyMemory (Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * BatchIdx, Iv, CXPLAT_MAX_IV_LENGTH);
+        }
+        else
+#endif
+        {
+#ifndef QUIC_BYPASS_CRYPTO
+            if (QUIC_FAILED(
+                Status =
+                CxPlatEncrypt(
+                    Builder->Key->PacketKey,
+                    Iv,
+                    Builder->HeaderLength,
+                    Header,
+                    PayloadLength,
+                    Payload))) {
+                QuicConnFatalError(Connection, Status, "Encryption failure");
+                goto Exit;
+            }
+#endif
         }
 
         QuicTraceEvent(
@@ -831,7 +860,9 @@ QuicPacketBuilderFinalize(
 
             uint8_t* PnStart = Payload - Builder->PacketNumberLength;
 
-            if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE) {
+            if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+#ifndef QUIC_BATCH_CRYPTO_HP
+            {
                 CXPLAT_DBG_ASSERT(Builder->BatchCount < QUIC_MAX_CRYPTO_BATCH_COUNT);
 
                 //
@@ -847,15 +878,21 @@ QuicPacketBuilderFinalize(
                 if (++Builder->BatchCount == QUIC_MAX_CRYPTO_BATCH_COUNT) {
                     QuicPacketBuilderFinalizeHeaderProtection(Builder);
                 }
-
-            } else {
+            }
+#else
+            {
+                // do nothing as short header protection will be done in an async batch
+            }
+#endif
+            else
+            {
                 CXPLAT_DBG_ASSERT(Builder->BatchCount == 0);
 
                 //
                 // Individually do header protection for long header packets as
                 // they generally use different keys.
                 //
-
+#ifndef QUIC_BYPASS_HP
                 if (QUIC_FAILED(
                     Status =
                     CxPlatHpComputeMask(
@@ -867,6 +904,9 @@ QuicPacketBuilderFinalize(
                     QuicConnFatalError(Connection, Status, "HP failure");
                     goto Exit;
                 }
+#else
+                CxPlatCopyMemory(Builder->HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
+#endif
 
                 Header[0] ^= (Builder->HpMask[0] & 0x0f); // Bottom 4 bits for LH
                 for (uint8_t i = 0; i < Builder->PacketNumberLength; ++i) {
@@ -981,6 +1021,9 @@ Exit:
                 QuicPacketBuilderFinalizeHeaderProtection(Builder);
             }
             CXPLAT_DBG_ASSERT(Builder->TotalCountDatagrams > 0);
+#ifdef QUIC_BATCH_CRYPTO_HP
+            QuicPacketBuilderCryptoBatch(Builder);
+#endif
             QuicPacketBuilderSendBatch(Builder);
             CXPLAT_DBG_ASSERT(Builder->Metadata->FrameCount == 0);
             QuicTraceEvent(
@@ -1041,4 +1084,123 @@ QuicPacketBuilderSendBatch(
     Builder->SendData = NULL;
     Builder->TotalDatagramsLength = 0;
     Builder->Metadata->FrameCount = 0;
+}
+
+typedef enum _CpaBoolean
+{
+    CPA_FALSE = (0==1), /**< False value */
+    CPA_TRUE = (1==1) /**< True value */
+} CpaBoolean;
+
+typedef int32_t Cpa32S;
+typedef Cpa32S CpaStatus;
+
+extern CpaStatus asynQatQuicEncrypt(uint8_t* pkey, uint8_t* iv, uint8_t *hdr, int hdr_len,
+    uint8_t *payload, int payload_len, uint8_t* hkey, CpaBoolean performOpNow);
+extern CpaStatus asynQatQuicComplete();
+
+#if 0
+static void hexdump(const char *title, const uint8_t *p, size_t l)
+{
+//#define DEBUG_DUMP
+    title = title;
+    p = p;
+    l = l;
+
+#ifdef DEBUG_DUMP
+    printf("%s (%zu bytes):\n", title, l);
+
+    while (l != 0) {
+        int i;
+        printf("   ");
+        for (i = 0; i < 16; ++i) {
+            printf(" %02x", *p++);
+            if (--l == 0)
+                break;
+        }
+        printf("\n");
+    }
+#endif
+}
+#endif
+
+_IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
+    _Inout_ QUIC_PACKET_BUILDER *Builder)
+{
+    Builder = Builder;
+
+    dbg_printf ("debug: ---------------asynQatQuicEncrypt (%d)------------------\n",
+        Builder->BCQuicAmount);
+
+    for (int i = 0; i < Builder->BCQuicAmount; i++)
+    {
+#ifndef QUIC_BYPASS_CRYPTO
+        CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
+                Builder->BCQuicPayload[i]);
+
+#ifdef QUIC_ASYNC_CRYPTO
+        asynQatQuicEncrypt(Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+            Builder->BCQuicHdr[i], Builder->HeaderLength,
+            Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i] ,
+            Builder->Key->hk,
+            CPA_TRUE);
+            //(i == Builder->BCQuicAmount - 1) ? CPA_TRUE : CPA_FALSE);
+        usleep(1000);
+        asynQatQuicComplete();
+
+        hexdump("Encrypted text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+#endif
+
+#else
+#if 0
+        // scratch buffer to wear CPU down with crypto cycles
+        char scratch[2000];
+        memset(scratch, 0, 2000);
+        memcpy (scratch, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+        dbg_printf("header length = %d, payload len = %d\n", Builder->HeaderLength, Builder->BCQuicPayloadLength[i]);
+        hexdump("Plain text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+
+        //CxPlatEncrypt(Builder->Key->PacketKey,Builder->BC_quic_iv + CXPLAT_MAX_IV_LENGTH * i,
+        //    Builder->HeaderLength, Builder->BC_quic_hdr[i], Builder->BC_quic_payload_length[i],  scratch);
+#endif
+#endif
+
+        uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+
+        uint8_t HpMask[128];
+        uint8_t *Header = Builder->BCQuicHdr[i];
+
+#ifndef QUIC_BYPASS_HP
+        CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
+#else
+        CxPlatCopyMemory(HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
+#endif
+
+        Header[0] ^= (HpMask[0] & 0x1f); // Bottom 5 bits for SH
+
+        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+        {
+            Header += 1 + Builder->Path->DestCid->CID.Length;
+        } else
+        {
+            assert (0);
+            Header = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        }
+
+        for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j) {
+            Header[j] ^= HpMask[1 + j];
+        }
+    }
+
+#ifndef QUIC_BYPASS_CRYPTO
+#ifdef QUIC_ASYNC_CRYPTO
+    // DEBUG: Delay 10 ms ag to ensure everything is done
+    usleep(10000);
+    asynQatQuicComplete();
+#endif
+#endif
+
+    dbg_printf ("debug: ---------------end of asynQatQuicEncrypt------------------\n");
+    Builder->BCQuicAmount = 0;
 }

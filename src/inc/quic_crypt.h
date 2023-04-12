@@ -154,7 +154,9 @@ typedef struct QUIC_PACKET_KEY {
 
     QUIC_PACKET_KEY_TYPE Type;
     CXPLAT_KEY* PacketKey;
+    uint8_t pk[32];
     CXPLAT_HP_KEY* HeaderKey;
+    uint8_t hk[32];
     uint8_t Iv[CXPLAT_IV_LENGTH];
     CXPLAT_SECRET TrafficSecret[0]; // Only preset for Type == QUIC_PACKET_KEY_1_RTT
 

@@ -266,6 +266,7 @@ QuicPacketKeyDerive(
         goto Error;
     }
 
+    CxPlatCopyMemory(Key->pk, Temp, KeyLength);
     CxPlatTlsLogSecret("key", Temp, KeyLength);
 
     Status =
@@ -288,7 +289,7 @@ QuicPacketKeyDerive(
         if (QUIC_FAILED(Status)) {
             goto Error;
         }
-
+        CxPlatCopyMemory(Key->hk, Temp, KeyLength);
         CxPlatTlsLogSecret("hp", Temp, KeyLength);
 
         Status =

@@ -42,6 +42,17 @@ typedef struct QUIC_PACKET_BUILDER {
     QUIC_PACKET_KEY* Key;
 
     //
+    // Batch Crypto vector storing the quic packet info
+    // (header offset/payload offset/payload length)
+    //
+    #define QUIC_MAX_BATCH_CRYPTO_NUMBER 64
+    uint8_t   BCQuicAmount;
+    uint8_t*  BCQuicHdr[QUIC_MAX_BATCH_CRYPTO_NUMBER];
+    uint8_t*  BCQuicPayload[QUIC_MAX_BATCH_CRYPTO_NUMBER];
+    uint16_t  BCQuicPayloadLength[QUIC_MAX_BATCH_CRYPTO_NUMBER];
+    uint8_t   BCQuicIV[QUIC_MAX_BATCH_CRYPTO_NUMBER * CXPLAT_MAX_IV_LENGTH];
+
+    //
     // Cipher text across multiple packets to batch header protection.
     //
     uint8_t CipherBatch[CXPLAT_HP_SAMPLE_LENGTH * QUIC_MAX_CRYPTO_BATCH_COUNT];
@@ -152,7 +163,7 @@ typedef struct QUIC_PACKET_BUILDER {
 } QUIC_PACKET_BUILDER;
 
 CXPLAT_STATIC_ASSERT(
-    sizeof(QUIC_PACKET_BUILDER) < 1024,
+    sizeof(QUIC_PACKET_BUILDER) < 4096,
     L"Packet builder should be small enough to fit on the stack.");
 
 //

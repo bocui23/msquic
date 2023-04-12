@@ -105,7 +105,9 @@ CxPlatSystemLoad(
     //
     CxPlatProcessorCount = 1;
 #else
-    CxPlatProcessorCount = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
+    //CxPlatProcessorCount = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
+    // Workaround to enable one core only
+    CxPlatProcessorCount = 1;
 #endif
 
 #ifdef CXPLAT_NUMA_AWARE

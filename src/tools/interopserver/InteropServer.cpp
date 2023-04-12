@@ -42,6 +42,7 @@ PrintUsage()
     printf("  quicinteropserver -listen:* -retry:1 -thumbprint:175342733b39d81c997817296c9b691172ca6b6e -root:c:\\temp\n");
 }
 
+
 int
 QUIC_MAIN_EXPORT
 main(
@@ -55,6 +56,7 @@ main(
         PrintUsage();
         return -1;
     }
+
 
     HQUIC Registration = nullptr;
     EXIT_ON_FAILURE(MsQuicOpen2(&MsQuic));

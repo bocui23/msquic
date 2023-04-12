@@ -22,6 +22,9 @@ Environment:
 #include "datapath_epoll.c.clog.h"
 #endif
 
+#define UDP_SEGMENT 103
+//#define UDP_GRO 104
+
 CXPLAT_STATIC_ASSERT((SIZEOF_STRUCT_MEMBER(QUIC_BUFFER, Length) <= sizeof(size_t)), "(sizeof(QUIC_BUFFER.Length) == sizeof(size_t) must be TRUE.");
 CXPLAT_STATIC_ASSERT((SIZEOF_STRUCT_MEMBER(QUIC_BUFFER, Buffer) == sizeof(void*)), "(sizeof(QUIC_BUFFER.Buffer) == sizeof(void*) must be TRUE.");
 
@@ -480,6 +483,7 @@ CxPlatDataPathCalculateFeatureSupport(
     struct sockaddr_in RecvAddr = {0}, RecvAddr2 = {0};
     socklen_t RecvAddrSize = sizeof(RecvAddr), RecvAddr2Size = sizeof(RecvAddr2);
     int PktInfoEnabled = 1, TosEnabled = 1, GroEnabled = 1;
+    GroEnabled = GroEnabled;
     uint8_t Buffer[8 * 1476] = {0};
     struct iovec IoVec;
     IoVec.iov_base = Buffer;
@@ -506,6 +510,7 @@ CxPlatDataPathCalculateFeatureSupport(
     RecvAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     char RecvControlBuffer[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(struct in6_pktinfo))] = {0};
     struct msghdr RecvMsg = {0};
+    RecvMsg = RecvMsg;
     RecvMsg.msg_name = &RecvAddr2;
     RecvMsg.msg_namelen = RecvAddr2Size;
     RecvMsg.msg_iov = &IoVec;

@@ -4126,6 +4126,7 @@ QuicConnRecvDecryptAndAuthenticate(
     CXPLAT_DBG_ASSERT(Packet->BufferLength >= Packet->HeaderLength + Packet->PayloadLength);
 
     const uint8_t* Payload = Packet->Buffer + Packet->HeaderLength;
+    QUIC_STATUS Status = 0;
 
     //
     // We need to copy the end of the packet before trying decryption, as a
@@ -4159,15 +4160,17 @@ QuicConnRecvDecryptAndAuthenticate(
             PacketDecrypt,
             "[pack][%llu] Decrypting",
             Packet->PacketId);
-        if (QUIC_FAILED(
-            CxPlatDecrypt(
+
+#ifndef QUIC_BYPASS_CRYPTO
+        Status = CxPlatDecrypt(
                 Connection->Crypto.TlsState.ReadKeys[Packet->KeyType]->PacketKey,
                 Iv,
                 Packet->HeaderLength,   // HeaderLength
                 Packet->Buffer,         // Header
                 Packet->PayloadLength,  // BufferLength
-                (uint8_t*)Payload))) {  // Buffer
-
+                (uint8_t*)Payload);
+#endif
+        if (QUIC_FAILED(Status)) {  // Buffer
             //
             // Check for a stateless reset packet.
             //
@@ -5458,6 +5461,7 @@ QuicConnRecvDatagramBatch(
 
     if (Packet->Encrypted &&
         Connection->State.HeaderProtectionEnabled) {
+#ifndef QUIC_BYPASS_HP
         if (QUIC_FAILED(
             CxPlatHpComputeMask(
                 Connection->Crypto.TlsState.ReadKeys[Packet->KeyType]->HeaderKey,
@@ -5467,6 +5471,9 @@ QuicConnRecvDatagramBatch(
             QuicPacketLogDrop(Connection, Packet, "Failed to compute HP mask");
             return;
         }
+#else
+    CxPlatCopyMemory(HpMask, Cipher, BatchCount * CXPLAT_HP_SAMPLE_LENGTH);
+#endif
     } else {
         CxPlatZeroMemory(HpMask, BatchCount * CXPLAT_HP_SAMPLE_LENGTH);
     }
