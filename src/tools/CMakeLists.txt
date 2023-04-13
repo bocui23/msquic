@@ -12,7 +12,13 @@ function(add_quic_tool)
         target_link_libraries(${targetname} platform)
     endif()
 
-    target_link_libraries(${targetname} logging base_link)
+
+    find_library(QUIC_CRYPTO_LIB quic_crypto_s HINTS /home/bcui/github/local_lib)
+    find_library(QAT_LIB qat_s HINTS /home/bcui/github/local_lib)
+
+    #set_target_properties(${MY_3RD_PARTY_LIB} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/3rd_party_libs)
+
+    target_link_libraries(${targetname} logging base_link ${QUIC_CRYPTO_LIB} ${QAT_LIB})
 
     set_property(TARGET ${targetname} PROPERTY FOLDER "${QUIC_FOLDER_PREFIX}tools")
 endfunction()

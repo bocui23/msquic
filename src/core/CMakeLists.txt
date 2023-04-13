@@ -64,7 +64,10 @@ endif()
 
 target_link_libraries(core PUBLIC inc)
 
-target_link_libraries(core PRIVATE warnings main_binary_link_args)
+find_library(QUIC_CRYPTO_LIB quic_crypto_s HINTS /home/bcui/github/local_lib)
+find_library(QAT_LIB qat_s HINTS /home/bcui/github/local_lib)
+
+target_link_libraries(core PRIVATE warnings main_binary_link_args ${QUIC_CRYPTO_LIB} ${QAT_LIB})
 
 set_property(TARGET core PROPERTY FOLDER "${QUIC_FOLDER_PREFIX}libraries")
 

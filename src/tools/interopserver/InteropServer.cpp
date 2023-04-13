@@ -42,6 +42,7 @@ PrintUsage()
     printf("  quicinteropserver -listen:* -retry:1 -thumbprint:175342733b39d81c997817296c9b691172ca6b6e -root:c:\\temp\n");
 }
 
+extern "C" int quic_crypto_init();
 
 int
 QUIC_MAIN_EXPORT
@@ -57,6 +58,7 @@ main(
         return -1;
     }
 
+    quic_crypto_init();
 
     HQUIC Registration = nullptr;
     EXIT_ON_FAILURE(MsQuicOpen2(&MsQuic));

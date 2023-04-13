@@ -1135,10 +1135,8 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     for (int i = 0; i < Builder->BCQuicAmount; i++)
     {
 #ifndef QUIC_BYPASS_CRYPTO
-        CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
-                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
-                Builder->BCQuicPayload[i]);
 
+#define QUIC_ASYNC_CRYPTO
 #ifdef QUIC_ASYNC_CRYPTO
         asynQatQuicEncrypt(Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
             Builder->BCQuicHdr[i], Builder->HeaderLength,
@@ -1149,7 +1147,11 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         usleep(1000);
         asynQatQuicComplete();
 
-        hexdump("Encrypted text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+        //hexdump("Encrypted text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+#else
+        CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
+                Builder->BCQuicPayload[i]);
 #endif
 
 #else
