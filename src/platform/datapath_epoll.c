@@ -2219,6 +2219,23 @@ CxPlatSendDataSend(
     );
 
 QUIC_STATUS
+CxPlatSocketSet(
+    _In_ const CXPLAT_ROUTE* Route,
+    _In_ CXPLAT_SEND_DATA* SendData
+    )
+{
+    CxPlatSendDataFinalizeSendBuffer(SendData);
+    //
+    // Cache the address, mapping the remote address as necessary.
+    //
+    CxPlatConvertToMappedV6(&Route->RemoteAddress, &SendData->RemoteAddress);
+    SendData->LocalAddress = Route->LocalAddress;
+
+    return QUIC_STATUS_SUCCESS;
+}
+
+
+QUIC_STATUS
 CxPlatSocketSend(
     _In_ CXPLAT_SOCKET* Socket,
     _In_ const CXPLAT_ROUTE* Route,
