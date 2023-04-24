@@ -54,6 +54,9 @@ QuicWorkerUninitialize(
     _In_ QUIC_WORKER* Worker
     );
 
+int32_t asyncQATQuicStart(void** cyInstHandle);
+int32_t asyncQATQuicStop(void* cyInstHandle);
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 QUIC_STATUS
 QuicWorkerInitialize(
@@ -89,6 +92,9 @@ QuicWorkerInitialize(
     if (QUIC_FAILED(Status)) {
         goto Error;
     }
+
+    Worker->cyInstHandle = 0;
+    asyncQATQuicStart(&Worker->cyInstHandle);
 
     Worker->ExecutionContext.Context = Worker;
     Worker->ExecutionContext.Callback = QuicWorkerLoop;
@@ -180,6 +186,9 @@ QuicWorkerUninitialize(
     CxPlatPoolUninitialize(&Worker->OperPool);
     CxPlatDispatchLockUninitialize(&Worker->Lock);
     QuicTimerWheelUninitialize(&Worker->TimerWheel);
+
+    asyncQATQuicStop(Worker->cyInstHandle);
+    Worker->cyInstHandle = 0;
 
     QuicTraceEvent(
         WorkerDestroyed,

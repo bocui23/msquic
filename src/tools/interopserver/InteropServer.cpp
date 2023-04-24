@@ -43,6 +43,13 @@ PrintUsage()
 }
 
 extern "C" int quic_crypto_init();
+extern "C" int32_t asyncQATQuicNewSession(void *cyInstHandle, void** sessionCtx);
+extern "C" int32_t asyncQATQuicStart(void** cyInstHandle);
+extern "C" int32_t algChainSample();
+extern "C" int32_t qat_init_ext(void** cyInstHandle, void** sessionCtx);
+
+void* dbg_cyInstHandle;
+void* dbg_sessionCtx;
 
 int
 QUIC_MAIN_EXPORT
@@ -59,6 +66,7 @@ main(
     }
 
     quic_crypto_init();
+    qat_init_ext(&dbg_cyInstHandle, &dbg_sessionCtx);
 
     HQUIC Registration = nullptr;
     EXIT_ON_FAILURE(MsQuicOpen2(&MsQuic));

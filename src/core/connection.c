@@ -43,6 +43,12 @@ typedef struct QUIC_RECEIVE_PROCESSING_STATE {
 } QUIC_RECEIVE_PROCESSING_STATE;
 
 
+typedef void (*QuicCryptoBatchCB)(void* data);
+void QuicCryptoBatchCallback(void* data);
+int32_t asyncQATQuicDelSession(void* sessionCtx, void* cyInstance, QuicCryptoBatchCB cb);
+int32_t asyncQATQuicNewSession(void *cyInstHandle, void** sessionCtx);
+int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t* pkey);
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 BOOLEAN
 QuicConnApplyNewSettings(
@@ -158,6 +164,12 @@ QuicConnAlloc(
         Connection->Timers[i].Type = (QUIC_CONN_TIMER_TYPE)i;
         Connection->Timers[i].ExpirationTime = UINT64_MAX;
     }
+
+    Connection->sessionCtx = 0;
+    asyncQATQuicNewSession(Worker->cyInstHandle, &Connection->sessionCtx);
+    printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandle, Connection->sessionCtx);
+    _asynQatQuicSetKey(Connection->sessionCtx, Connection->sessionCtx);
+    Connection->keySet = 0;
 
     if (IsServer) {
 
@@ -425,6 +437,11 @@ QuicConnFree(
     CxPlatPoolFree(
         &MsQuicLib.PerProc[CxPlatProcCurrentNumber()].ConnectionPool,
         Connection);
+
+    printf ("QuicConnFree, conn = %p, worker = %p, sessionCtx = %p\n", Connection, Connection->Worker, Connection->sessionCtx);
+    asyncQATQuicDelSession(Connection->sessionCtx, Connection->Worker->cyInstHandle, QuicCryptoBatchCallback);
+    Connection->sessionCtx = 0;
+    Connection->keySet = 0;
 
 #if DEBUG
     InterlockedDecrement(&MsQuicLib.ConnectionCount);

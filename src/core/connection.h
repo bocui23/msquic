@@ -639,6 +639,13 @@ typedef struct QUIC_CONNECTION {
         QUIC_FLOW_BLOCKED_TIMING_TRACKER FlowControl;
     } BlockedTimings;
 
+    //
+    // Crypto session context for offloading
+    //
+    void* sessionCtx;
+
+    uint32_t keySet; // set 1 if key provisioned
+
 } QUIC_CONNECTION;
 
 typedef struct QUIC_SERIALIZED_RESUMPTION_STATE {
