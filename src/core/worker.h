@@ -86,7 +86,7 @@ typedef struct QUIC_CACHEALIGN QUIC_WORKER {
     CXPLAT_POOL StatelessContextPool; // QUIC_STATELESS_CONTEXT
     CXPLAT_POOL OperPool; // QUIC_OPERATION
 
-    void* cyInstHandle; // a crypto instance per worker
+    void* cyInstHandleX; // a crypto instance-X(cy instance ptr & related buffers) per worker
 
 } QUIC_WORKER;
 

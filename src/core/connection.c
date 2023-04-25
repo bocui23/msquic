@@ -166,9 +166,8 @@ QuicConnAlloc(
     }
 
     Connection->sessionCtx = 0;
-    asyncQATQuicNewSession(Worker->cyInstHandle, &Connection->sessionCtx);
-    printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandle, Connection->sessionCtx);
-    _asynQatQuicSetKey(Connection->sessionCtx, Connection->sessionCtx);
+    asyncQATQuicNewSession(Worker->cyInstHandleX, &Connection->sessionCtx);
+    printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandleX, Connection->sessionCtx);
     Connection->keySet = 0;
 
     if (IsServer) {
@@ -439,7 +438,7 @@ QuicConnFree(
         Connection);
 
     printf ("QuicConnFree, conn = %p, worker = %p, sessionCtx = %p\n", Connection, Connection->Worker, Connection->sessionCtx);
-    asyncQATQuicDelSession(Connection->sessionCtx, Connection->Worker->cyInstHandle, QuicCryptoBatchCallback);
+    asyncQATQuicDelSession(Connection->sessionCtx, Connection->Worker->cyInstHandleX, QuicCryptoBatchCallback);
     Connection->sessionCtx = 0;
     Connection->keySet = 0;
 

@@ -1107,7 +1107,7 @@ extern CpaStatus asynQatQuicComplete(QuicCryptoBatchCB cb);
 CpaStatus _asynQatQuicEncrypt(void * cyInstHandle, void *sessionCtx, uint8_t* pkey, uint8_t* iv, uint8_t *hdr,
     int hdr_len, uint8_t *payload, int payload_len, uint8_t* hkey, CpaBoolean performOpNow,
     void* sendData, unsigned int pn_len, unsigned int cid_len);
-CpaStatus _asynQatQuicComplete(void * cyInstHandle, QuicCryptoBatchCB cb);
+CpaStatus _asynQatQuicComplete(void * cyInstHandleX, QuicCryptoBatchCB cb);
 
 
 QUIC_STATUS
@@ -1156,8 +1156,6 @@ static void hexdump(const char *title, const uint8_t *p, size_t l)
 }
 #endif
 
-int32_t asyncQATQuicNewSession(void *cyInstHandle, void** sessionCtx);
-int32_t asyncQATQuicStart(void** cyInstHandle);
 int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t* pkey);
 
 QUIC_STATUS CxPlatSocketSet(
@@ -1195,7 +1193,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
             Builder->PacketNumberLength,
             Builder->Path->DestCid->CID.Length);
 */
-        _asynQatQuicEncrypt(Builder->Connection->Worker->cyInstHandle, Builder->Connection->sessionCtx,
+        _asynQatQuicEncrypt(Builder->Connection->Worker->cyInstHandleX, Builder->Connection->sessionCtx,
             Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
             Builder->BCQuicHdr[i], Builder->HeaderLength,
             Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i] ,
@@ -1266,7 +1264,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     asynQatQuicComplete(QuicCryptoBatchCallback);
     */
 
-    _asynQatQuicComplete(Builder->Connection->Worker->cyInstHandle, QuicCryptoBatchCallback);
+    _asynQatQuicComplete(Builder->Connection->Worker->cyInstHandleX, QuicCryptoBatchCallback);
 
     Builder->BCQuicAmount = 0;
 }

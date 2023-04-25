@@ -93,8 +93,8 @@ QuicWorkerInitialize(
         goto Error;
     }
 
-    Worker->cyInstHandle = 0;
-    asyncQATQuicStart(&Worker->cyInstHandle);
+    Worker->cyInstHandleX = 0;
+    asyncQATQuicStart(&Worker->cyInstHandleX);
 
     Worker->ExecutionContext.Context = Worker;
     Worker->ExecutionContext.Callback = QuicWorkerLoop;
@@ -187,8 +187,8 @@ QuicWorkerUninitialize(
     CxPlatDispatchLockUninitialize(&Worker->Lock);
     QuicTimerWheelUninitialize(&Worker->TimerWheel);
 
-    asyncQATQuicStop(Worker->cyInstHandle);
-    Worker->cyInstHandle = 0;
+    asyncQATQuicStop(Worker->cyInstHandleX);
+    Worker->cyInstHandleX = 0;
 
     QuicTraceEvent(
         WorkerDestroyed,
