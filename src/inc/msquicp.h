@@ -20,9 +20,16 @@ Abstract:
 extern "C" {
 #endif
 
+//
+// QAT batch crypto:
+//    disable QUIC_BYPASS_CRYPTO, enable QUIC_BATCH_CRYPTO_HP/QUIC_BYPASS_HP/QUIC_ASYNC_CRYPTO
+// Software batch crypto:
+//    disable QUIC_BYPASS_CRYPTO/QUIC_ASYNC_CRYPTO, enable QUIC_BATCH_CRYPTO_HP/QUIC_BYPASS_HP
+//
 #define QUIC_BATCH_CRYPTO_HP
 //#define QUIC_BYPASS_CRYPTO
-#define QUIC_BYPASS_HP
+//#define QUIC_BYPASS_HP
+//#define QUIC_ASYNC_CRYPTO
 
 //#define dbg_printf(...) printf(__VA_ARGS__)
 #define dbg_printf(...)

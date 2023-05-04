@@ -1172,27 +1172,15 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     {
 #ifndef QUIC_BYPASS_CRYPTO
 
-#define QUIC_ASYNC_CRYPTO
 #ifdef QUIC_ASYNC_CRYPTO
-    // provision key into QAT till 1st Tx, doesn't support key refresh/update yet
-    if (Builder->Connection->keySet == 0)
-    {
-        //printf ("Prepare key setup, conn = %p, sessionctx = %p, key = %p\n",
-        //    Builder->Connection, Builder->Connection->sessionCtx, Builder->Key->pk);
-        _asynQatQuicSetKey(Builder->Connection->sessionCtx, (uint8_t *)&Builder->Key->pk);
-        Builder->Connection->keySet = 1;
-    }
-/*
-        asynQatQuicEncrypt(Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
-            Builder->BCQuicHdr[i], Builder->HeaderLength,
-            Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i] ,
-            //Builder->Key->hk,
-            (uint8_t*)Builder->Key->HeaderKey, // key format used by OpenSSL
-            (i == Builder->BCQuicAmount - 1) ? CPA_TRUE : CPA_FALSE, 
-            Builder->SendData,
-            Builder->PacketNumberLength,
-            Builder->Path->DestCid->CID.Length);
-*/
+        // provision key into QAT till 1st Tx, doesn't support key refresh/update yet
+        if (Builder->Connection->keySet == 0)
+        {
+            //printf ("Prepare key setup, conn = %p, sessionctx = %p, key = %p\n",
+            //    Builder->Connection, Builder->Connection->sessionCtx, Builder->Key->pk);
+            _asynQatQuicSetKey(Builder->Connection->sessionCtx, (uint8_t *)&Builder->Key->pk);
+            Builder->Connection->keySet = 1;
+        }
         _asynQatQuicEncrypt(Builder->Connection->Worker->cyInstHandleX, Builder->Connection->sessionCtx,
             Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
             Builder->BCQuicHdr[i], Builder->HeaderLength,
@@ -1216,23 +1204,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
                 Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
                 Builder->BCQuicPayload[i]);
-#endif
 
-#else
-#if 0
-        // scratch buffer to wear CPU down with crypto cycles
-        char scratch[2000];
-        memset(scratch, 0, 2000);
-        memcpy (scratch, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
-        dbg_printf("header length = %d, payload len = %d\n", Builder->HeaderLength, Builder->BCQuicPayloadLength[i]);
-        hexdump("Plain text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
-
-        //CxPlatEncrypt(Builder->Key->PacketKey,Builder->BC_quic_iv + CXPLAT_MAX_IV_LENGTH * i,
-        //    Builder->HeaderLength, Builder->BC_quic_hdr[i], Builder->BC_quic_payload_length[i],  scratch);
-#endif
-#endif
-
-#if 0
         uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
 
         uint8_t HpMask[128];
@@ -1258,13 +1230,14 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j) {
             Header[j] ^= HpMask[1 + j];
         }
-#endif
+#endif // QUIC_ASYNC_CRYPTO
+
+#endif // QUIC_BYPASS_CRYPTO
     }
-    /*
-    asynQatQuicComplete(QuicCryptoBatchCallback);
-    */
 
+#ifdef QUIC_ASYNC_CRYPTO
     _asynQatQuicComplete(Builder->Connection->Worker->cyInstHandleX, QuicCryptoBatchCallback);
-
+#endif
     Builder->BCQuicAmount = 0;
+
 }
