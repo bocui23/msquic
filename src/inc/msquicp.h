@@ -28,8 +28,8 @@ extern "C" {
 //
 #define QUIC_BATCH_CRYPTO_HP
 //#define QUIC_BYPASS_CRYPTO
-//#define QUIC_BYPASS_HP
-//#define QUIC_ASYNC_CRYPTO
+#define QUIC_BYPASS_HP
+#define QUIC_ASYNC_CRYPTO
 
 #define CUR_CPU_CORE_AMOUNT 32
 

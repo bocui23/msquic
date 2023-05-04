@@ -41,7 +41,7 @@ PrintUsage()
     printf("  quicinteropserver -listen:127.0.0.1 -name:localhost -port:443 -root:c:\\temp\n");
     printf("  quicinteropserver -listen:* -retry:1 -thumbprint:175342733b39d81c997817296c9b691172ca6b6e -root:c:\\temp\n");
 }
-//#define QUIC_ASYNC_CRYPTO
+#define QUIC_ASYNC_CRYPTO
 
 #ifdef QUIC_ASYNC_CRYPTO
 extern "C" int quic_crypto_init();
