@@ -105,9 +105,7 @@ CxPlatSystemLoad(
     //
     CxPlatProcessorCount = 1;
 #else
-    //CxPlatProcessorCount = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
-    // Workaround to enable one core only
-    CxPlatProcessorCount = 1;
+    CxPlatProcessorCount = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
 #endif
 
 #ifdef CXPLAT_NUMA_AWARE
@@ -526,7 +524,14 @@ CxPlatProcCurrentNumber(
     )
 {
 #if defined(CX_PLATFORM_LINUX)
-    return (uint32_t)sched_getcpu() % CxPlatProcessorCount;
+    uint32_t curProc;
+
+    // return the contiguous logical core number starting from 0
+    curProc = (uint32_t)sched_getcpu() % CxPlatProcessorCount;
+    curProc = (curProc >= CUR_CPU_CORE_AMOUNT) ? ((curProc - CUR_CPU_CORE_AMOUNT)*2 + 1) : (curProc*2);
+    return curProc;
+    //return (uint32_t)sched_getcpu() % CxPlatProcessorCount;
+
 #elif defined(CX_PLATFORM_DARWIN)
     //
     // arm64 macOS has no way to get the current proc, so treat as single core.

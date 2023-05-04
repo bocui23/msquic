@@ -31,6 +31,8 @@ extern "C" {
 //#define QUIC_BYPASS_HP
 //#define QUIC_ASYNC_CRYPTO
 
+#define CUR_CPU_CORE_AMOUNT 32
+
 //#define dbg_printf(...) printf(__VA_ARGS__)
 #define dbg_printf(...)
 

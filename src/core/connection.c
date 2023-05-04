@@ -43,11 +43,12 @@ typedef struct QUIC_RECEIVE_PROCESSING_STATE {
 } QUIC_RECEIVE_PROCESSING_STATE;
 
 
+#ifdef QUIC_ASYNC_CRYPTO
 typedef void (*QuicCryptoBatchCB)(void* data);
 void QuicCryptoBatchCallback(void* data);
 int32_t asyncQATQuicDelSession(void* sessionCtx, void* cyInstance, QuicCryptoBatchCB cb);
 int32_t asyncQATQuicNewSession(void *cyInstHandle, void** sessionCtx);
-int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t* pkey);
+#endif
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 BOOLEAN
@@ -71,6 +72,10 @@ QuicConnAlloc(
 {
     BOOLEAN IsServer = Datagram != NULL;
     uint32_t CurProcIndex = CxPlatProcCurrentNumber();
+
+     printf ("QuicConnAlloc CurProcIndex = %d, Datagram->PartitionIndex=%d, MsQuicLib.PartitionCount=%d \n",
+                  CurProcIndex, Datagram->PartitionIndex, MsQuicLib.PartitionCount);
+
     *NewConnection = NULL;
     QUIC_STATUS Status;
 
@@ -166,9 +171,11 @@ QuicConnAlloc(
     }
 
     Connection->sessionCtx = 0;
+#ifdef QUIC_ASYNC_CRYPTO
     asyncQATQuicNewSession(Worker->cyInstHandleX, &Connection->sessionCtx);
     printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandleX, Connection->sessionCtx);
     Connection->keySet = 0;
+#endif
 
     if (IsServer) {
 
@@ -437,8 +444,10 @@ QuicConnFree(
         &MsQuicLib.PerProc[CxPlatProcCurrentNumber()].ConnectionPool,
         Connection);
 
+#ifdef QUIC_ASYNC_CRYPTO
     printf ("QuicConnFree, conn = %p, worker = %p, sessionCtx = %p\n", Connection, Connection->Worker, Connection->sessionCtx);
     asyncQATQuicDelSession(Connection->sessionCtx, Connection->Worker->cyInstHandleX, QuicCryptoBatchCallback);
+#endif
     Connection->sessionCtx = 0;
     Connection->keySet = 0;
 

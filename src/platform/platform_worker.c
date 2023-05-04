@@ -133,7 +133,8 @@ CxPlatWorkersLazyStart(
         CxPlatWorkerCount = Config->ProcessorCount;
         ProcessorList = Config->ProcessorList;
     } else {*/
-        CxPlatWorkerCount = CxPlatProcMaxCount();
+        // CxPlatWorkerCount = CxPlatProcMaxCount();
+        CxPlatWorkerCount = CxPlatProcActiveCount();
         ProcessorList = NULL;
     //}
     CXPLAT_DBG_ASSERT(CxPlatWorkerCount > 0 && CxPlatWorkerCount <= UINT16_MAX);
@@ -162,8 +163,9 @@ CxPlatWorkersLazyStart(
     for (uint32_t i = 0; i < CxPlatWorkerCount; ++i) {
         CxPlatLockInitialize(&CxPlatWorkers[i].ECLock);
         CxPlatWorkers[i].InitializedECLock = TRUE;
-        CxPlatWorkers[i].IdealProcessor = ProcessorList ? ProcessorList[i] : (uint16_t)i;
-        CXPLAT_DBG_ASSERT(CxPlatWorkers[i].IdealProcessor < CxPlatProcMaxCount());
+        //CxPlatWorkers[i].IdealProcessor = ProcessorList ? ProcessorList[i] : (uint16_t)i;
+        //CXPLAT_DBG_ASSERT(CxPlatWorkers[i].IdealProcessor < CxPlatProcMaxCount());
+	CxPlatWorkers[i].IdealProcessor = ProcessorList ? ProcessorList[i] : ((i % 2) ? (i/2 + CUR_CPU_CORE_AMOUNT) : i/2);
         ThreadConfig.IdealProcessor = CxPlatWorkers[i].IdealProcessor;
         ThreadConfig.Context = &CxPlatWorkers[i];
         if (!CxPlatEventQInitialize(&CxPlatWorkers[i].EventQ)) {
@@ -307,6 +309,8 @@ CxPlatWorkerGetEventQ(
     )
 {
     for (uint32_t i = 0; i < CxPlatWorkerCount; ++i) {
+        printf ("CxPlatWorkerGetEventQ: CxPlatWorkers[%d].IdealProcessor = %d, IdealProcessor = %d\n",
+            i, CxPlatWorkers[i].IdealProcessor, IdealProcessor);
         if (CxPlatWorkers[i].IdealProcessor == IdealProcessor) {
             return &CxPlatWorkers[i].EventQ;
         }

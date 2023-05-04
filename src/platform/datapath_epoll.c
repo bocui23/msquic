@@ -643,7 +643,8 @@ CxPlatDataPathInitialize(
         ProcessorCount = Config->ProcessorCount;
         ProcessorList = Config->ProcessorList;
     } else {
-        ProcessorCount = CxPlatProcMaxCount();
+        //ProcessorCount = CxPlatProcMaxCount();
+	ProcessorCount = CxPlatProcActiveCount();
         ProcessorList = NULL;
     }
 
@@ -676,7 +677,8 @@ CxPlatDataPathInitialize(
     for (uint32_t i = 0; i < Datapath->ProcCount; i++) {
         CxPlatProcessorContextInitialize(
             Datapath,
-            ProcessorList ? ProcessorList[i] : (uint16_t)i,
+            //ProcessorList ? ProcessorList[i] : (uint16_t)i,
+	    ProcessorList ? ProcessorList[i] : ((i % 2) ? (i/2 + CUR_CPU_CORE_AMOUNT) : i/2),
             &Datapath->Processors[i]);
     }
 
@@ -1864,6 +1866,12 @@ CxPlatSocketContextRecvComplete(
                 RecvData->BufferLength = SegmentLength;
             }
             RecvData->PartitionIndex = SocketContext->DatapathProc->IdealProcessor;
+
+            RecvData->PartitionIndex = (RecvData->PartitionIndex >= CUR_CPU_CORE_AMOUNT) ?
+                                        ((RecvData->PartitionIndex - CUR_CPU_CORE_AMOUNT)*2+1) :
+                                        (RecvData->PartitionIndex*2);
+            //printf ("CxPlatSocketContextRecvComplete: RecvData->PartitionIndex = %d\n", RecvData->PartitionIndex);
+
             RecvData->TypeOfService = TOS;
             RecvData->Allocated = TRUE;
             RecvData->QueuedOnConnection = FALSE;

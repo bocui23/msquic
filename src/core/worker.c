@@ -54,8 +54,10 @@ QuicWorkerUninitialize(
     _In_ QUIC_WORKER* Worker
     );
 
+#ifdef QUIC_ASYNC_CRYPTO
 int32_t asyncQATQuicStart(void** cyInstHandle);
 int32_t asyncQATQuicStop(void* cyInstHandle);
+#endif
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 QUIC_STATUS
@@ -94,7 +96,9 @@ QuicWorkerInitialize(
     }
 
     Worker->cyInstHandleX = 0;
+#ifdef QUIC_ASYNC_CRYPTO
     asyncQATQuicStart(&Worker->cyInstHandleX);
+#endif
 
     Worker->ExecutionContext.Context = Worker;
     Worker->ExecutionContext.Callback = QuicWorkerLoop;
@@ -187,7 +191,9 @@ QuicWorkerUninitialize(
     CxPlatDispatchLockUninitialize(&Worker->Lock);
     QuicTimerWheelUninitialize(&Worker->TimerWheel);
 
+#ifdef QUIC_ASYNC_CRYPTO
     asyncQATQuicStop(Worker->cyInstHandleX);
+#endif
     Worker->cyInstHandleX = 0;
 
     QuicTraceEvent(
@@ -803,7 +809,9 @@ QuicWorkerPoolInitialize(
 
     QUIC_STATUS Status = QUIC_STATUS_SUCCESS;
     for (uint16_t i = 0; i < WorkerCount; i++) {
-        Status = QuicWorkerInitialize(Registration, ExecProfile, i, &WorkerPool->Workers[i]);
+        //Status = QuicWorkerInitialize(Registration, ExecProfile, i, &WorkerPool->Workers[i]);
+	Status = QuicWorkerInitialize(Registration, ExecProfile, ((i % 2) ? (i/2 + CUR_CPU_CORE_AMOUNT) : i/2), &WorkerPool->Workers[i]);
+
         if (QUIC_FAILED(Status)) {
             for (uint16_t j = 0; j < i; j++) {
                 QuicWorkerUninitialize(&WorkerPool->Workers[j]);

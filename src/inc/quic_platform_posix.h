@@ -1290,7 +1290,8 @@ CxPlatCurThreadID(
 extern uint32_t CxPlatProcessorCount;
 
 #define CxPlatProcMaxCount() CxPlatProcessorCount
-#define CxPlatProcActiveCount() CxPlatProcessorCount
+//#define CxPlatProcActiveCount() CxPlatProcessorCount
+#define CxPlatProcActiveCount() 2
 
 uint32_t
 CxPlatProcCurrentNumber(
