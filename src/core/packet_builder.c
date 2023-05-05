@@ -16,6 +16,8 @@ Abstract:
 #ifdef QUIC_CLOG
 #include "packet_builder.c.clog.h"
 #endif
+#include "picotls.h"
+#include "picotls/fusion.h"
 
 #ifdef QUIC_FUZZER
 
@@ -830,6 +832,7 @@ QuicPacketBuilderFinalize(
             Builder->BCQuicHdr[BatchIdx] = Header;
             Builder->BCQuicPayload[BatchIdx] = Payload;
             Builder->BCQuicPayloadLength[BatchIdx] = PayloadLength;
+            Builder->BCQuicSN[BatchIdx] = Builder->Metadata->PacketNumber;
             CxPlatCopyMemory (Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * BatchIdx, Iv, CXPLAT_MAX_IV_LENGTH);
         }
         else
@@ -1156,6 +1159,7 @@ static void hexdump(const char *title, const uint8_t *p, size_t l)
 }
 #endif
 
+
 int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t* pkey);
 
 QUIC_STATUS CxPlatSocketSet(
@@ -1181,6 +1185,32 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
             _asynQatQuicSetKey(Builder->Connection->sessionCtx, (uint8_t *)&Builder->Key->pk);
             Builder->Connection->keySet = 1;
         }
+
+        // 9.07Gbps/2T1C, qat encryption + bypass hp
+        /*
+        0.00%  [unknown]                           
+        +   42.84%    41.87%  libmsquic.so.2.2.0    
+        -   32.48%    19.38%  libc-2.28.so          
+        + 10.41% read                            
+            4.12% __memmove_avx_unaligned_erms     
+        + 4.07% 0x58300000000                    
+        + 1.29% clock_gettime@GLIBC_2.2.5        
+        + 0.90% recvmmsg                         
+            0.53% _int_malloc                      
+        -   22.61%    22.61%  [kernel.kallsyms]     
+        - 21.37% 0                               
+            - 10.57% 0x7f690000001c               
+                + 10.56% __libc_sendmsg            
+            + 10.40% read                         
+        + 0.88% recvmmsg                         
+        +   14.11%     3.51%  libpthread-2.28.so    
+        +    5.11%     5.08%  libqat_s.so           
+        +    4.92%     4.90%  libquic_crypto_s.so   
+        +    1.44%     1.44%  [vdso]                
+            1.14%     1.14%  libusdm_drv_s.so      
+            0.07%     0.07%  quicinteropserver     
+            0.00%     0.00%  perf            
+        */
         _asynQatQuicEncrypt(Builder->Connection->Worker->cyInstHandleX, Builder->Connection->sessionCtx,
             Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
             Builder->BCQuicHdr[i], Builder->HeaderLength,
@@ -1201,11 +1231,32 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
 
         //hexdump("Encrypted text data ", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
 #else
+
+        uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+
+#if 0
+        // picotls crypto, functionality not ready yet
+        static ptls_aead_context_t *aead = 0;
+        if (aead == 0)
+            aead = ptls_aead_new_direct(&ptls_fusion_aes128gcm, 1, Builder->Key->pk,
+                Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+
+        uint8_t encrypted[2000];
+        ptls_aead_encrypt(aead, &encrypted, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i],
+            Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
+#else
         CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
                 Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
                 Builder->BCQuicPayload[i]);
+#endif
 
-        uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+#if 0
+        // picotls crypto, functionality not ready yet
+        if (memcmp(encrypted, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]) != 0)
+            printf ("picotls has different crypto output (sn = %ld)\n", Builder->BCQuicSN[i]);
+        else
+            printf ("picotls crypto works well !!! \n");
+#endif
 
         uint8_t HpMask[128];
         uint8_t *Header = Builder->BCQuicHdr[i];
@@ -1232,7 +1283,100 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         }
 #endif // QUIC_ASYNC_CRYPTO
 
-#endif // QUIC_BYPASS_CRYPTO
+#else // QUIC_BYPASS_CRYPTO
+
+        uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+
+        // code use to evaluate crypto overhead
+        uint8_t tmp_buf[2000];
+        tmp_buf[0] = tmp_buf[0];
+
+        #if DUMMY_PICOTLS_CRYPTO
+        // picotls crypto
+        // msquic 39%, fusion 24%, kernel 23%(read 12%, sendmsg 8%)
+        // 8.97Gbps/2T1C - 7.36Gbps/1T1C, 
+        // picotls crypto(cycle cost included but result not verified), bypass HP
+        /*
+          Children      Self  Shared Object
+        +   68.53%     0.00%  [unknown]
+        +   39.54%    38.67%  libmsquic.so.2.2.0
+        +   24.83%     9.84%  libc-2.28.so
+            23.79%    23.76%  libpicotls-fusion.so
+        +   22.93%    22.93%  [kernel.kallsyms]
+        +   12.23%     3.18%  libpthread-2.28.so
+        +    1.61%     1.60%  [vdso]
+            0.01%     0.01%  quicinteropserver
+            0.00%     0.00%  perf
+        */
+        static ptls_aead_context_t *aead = 0;
+        if (aead == 0)
+            aead = ptls_aead_new_direct(&ptls_fusion_aes128gcm, 1, Builder->Key->pk,
+                Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+
+        ptls_aead_encrypt(aead, &tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i],
+            Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
+        #endif
+        
+        #if DUMMY_QUICTLS_CRYPTO
+        // quictls/openssl crypto
+        // 7.23Gbps/2T1C
+        // OpenSSL crypto(cycle cost included, additional memcpy for payload save/restore), bypass HP
+        /*
+                Children      Self  Shared Object
+        +   67.18%    66.33%  libmsquic.so.2.2.0
+        +   38.92%     0.00%  [unknown]
+        +   22.83%    12.44%  libc-2.28.so
+        +   17.23%    17.23%  [kernel.kallsyms]
+        +   10.47%     2.67%  libpthread-2.28.so
+        +    1.31%     1.31%  [vdso]
+            0.02%     0.02%  quicinteropserver
+            0.00%     0.00%  perf
+        */
+        memcpy (tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+                CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
+                Builder->BCQuicPayload[i]);
+        memcpy(Builder->BCQuicPayload[i], tmp_buf, Builder->BCQuicPayloadLength[i]);
+        #endif
+
+        // Or 11.4Gbps/2T1C, bypass crypto/hp
+        // perf: read 12%, 10% sendmsg
+        /*
+                Children      Self  Shared Object
+        +   59.00%     0.00%  [unknown]
+        +   52.60%    51.58%  libmsquic.so.2.2.0
+        +   30.81%    15.48%  libc-2.28.so
+        +   26.56%    26.56%  [kernel.kallsyms]
+        +   17.42%     4.42%  libpthread-2.28.so
+        +    1.94%     1.94%  [vdso]
+            0.02%     0.02%  quicinteropserver
+            0.00%     0.00%  perf
+        */
+
+        uint8_t HpMask[128];
+        uint8_t *Header = Builder->BCQuicHdr[i];
+
+#ifndef QUIC_BYPASS_HP
+        CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
+#else
+        CxPlatCopyMemory(HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
+#endif
+
+        Header[0] ^= (HpMask[0] & 0x1f); // Bottom 5 bits for SH
+
+        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+        {
+            Header += 1 + Builder->Path->DestCid->CID.Length;
+        } else
+        {
+            assert (0);
+            Header = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        }
+
+        for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j) {
+            Header[j] ^= HpMask[1 + j];
+        }
+#endif
     }
 
 #ifdef QUIC_ASYNC_CRYPTO

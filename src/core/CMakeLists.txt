@@ -64,10 +64,12 @@ endif()
 
 target_link_libraries(core PUBLIC inc)
 
+include_directories(/home/bcui/quic/picotls-so/include)
 find_library(QUIC_CRYPTO_LIB quic_crypto_s HINTS /home/bcui/github/local_lib)
 find_library(QAT_LIB qat_s HINTS /home/bcui/github/local_lib)
-
-target_link_libraries(core PRIVATE warnings main_binary_link_args ${QUIC_CRYPTO_LIB} ${QAT_LIB})
+find_library(PICOTLS_FUSION_LIB picotls-fusion HINTS /home/bcui/github/local_lib)
+find_library(PICOTLS_CORE_LIB picotls-core HINTS /home/bcui/github/local_lib)
+target_link_libraries(core PRIVATE warnings main_binary_link_args ${QUIC_CRYPTO_LIB} ${QAT_LIB} ${PICOTLS_CORE_LIB} ${PICOTLS_FUSION_LIB})
 
 set_property(TARGET core PROPERTY FOLDER "${QUIC_FOLDER_PREFIX}libraries")
 

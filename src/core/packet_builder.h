@@ -51,6 +51,7 @@ typedef struct QUIC_PACKET_BUILDER {
     uint8_t*  BCQuicPayload[QUIC_MAX_BATCH_CRYPTO_NUMBER];
     uint16_t  BCQuicPayloadLength[QUIC_MAX_BATCH_CRYPTO_NUMBER];
     uint8_t   BCQuicIV[QUIC_MAX_BATCH_CRYPTO_NUMBER * CXPLAT_MAX_IV_LENGTH];
+    uint64_t   BCQuicSN[QUIC_MAX_BATCH_CRYPTO_NUMBER];
 
     //
     // Cipher text across multiple packets to batch header protection.
