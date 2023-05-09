@@ -35,6 +35,7 @@ Abstract:
 #ifdef QUIC_CLOG
 #include "connection.c.clog.h"
 #endif
+#include "intel-ipsec-mb.h"
 
 typedef struct QUIC_RECEIVE_PROCESSING_STATE {
     BOOLEAN ResetIdleTimeout;
@@ -49,6 +50,40 @@ void QuicCryptoBatchCallback(void* data);
 int32_t asyncQATQuicDelSession(void* sessionCtx, void* cyInstance, QuicCryptoBatchCB cb);
 int32_t asyncQATQuicNewSession(void *cyInstHandle, void** sessionCtx);
 #endif
+
+void imb_conn_init(IMB_MGR** p_mgr)
+{
+    IMB_ARCH arch;
+    *p_mgr = alloc_mb_mgr(0);
+
+    init_mb_mgr_auto(*p_mgr, &arch); /* or init_mb_mgr_sse/avx/avx2/avx512 */
+
+    /*
+    * check for self-test presence and successful
+    * - requires library version v1.3 or newer
+    */
+    if ((*p_mgr)->features & IMB_FEATURE_SELF_TEST) {
+            /* self-test feature present */
+            if ((*p_mgr)->features & IMB_FEATURE_SELF_TEST_PASS) {
+                    printf("SELF-TEST: PASS\n");
+            } else {
+                    printf("SELF-TEST: FAIL\n");
+        }
+    } else {
+            printf("SELF-TEST: N/A (requires library >= v1.3)\n");
+    }
+
+    /* check for initialization self-test error */
+    if (imb_get_errno(*p_mgr) == IMB_ERR_SELFTEST) {
+            /* self-test error */
+            exit(EXIT_FAILURE);
+    }
+}
+
+void imb_conn_deinit(IMB_MGR* p_mgr)
+{
+    free_mb_mgr(p_mgr);
+}
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 BOOLEAN
@@ -171,6 +206,8 @@ QuicConnAlloc(
     }
 
     Connection->sessionCtx = 0;
+    imb_conn_init((IMB_MGR **)&Connection->p_mgr);
+    Connection->gdata_key = CxPlatAlloc(sizeof(struct gcm_key_data), 0);
 #ifdef QUIC_ASYNC_CRYPTO
     asyncQATQuicNewSession(Worker->cyInstHandleX, &Connection->sessionCtx);
     printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandleX, Connection->sessionCtx);
@@ -448,6 +485,9 @@ QuicConnFree(
     printf ("QuicConnFree, conn = %p, worker = %p, sessionCtx = %p\n", Connection, Connection->Worker, Connection->sessionCtx);
     asyncQATQuicDelSession(Connection->sessionCtx, Connection->Worker->cyInstHandleX, QuicCryptoBatchCallback);
 #endif
+    imb_conn_deinit(Connection->p_mgr);
+    CxPlatFree(Connection->gdata_key, 0);
+    Connection->gdata_key = 0;
     Connection->sessionCtx = 0;
     Connection->keySet = 0;
 

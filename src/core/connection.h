@@ -644,6 +644,10 @@ typedef struct QUIC_CONNECTION {
     //
     void* sessionCtx;
 
+    // ipsecmb manager
+    void *p_mgr;
+    void *gdata_key;
+
     uint32_t keySet; // set 1 if key provisioned
 
 } QUIC_CONNECTION;

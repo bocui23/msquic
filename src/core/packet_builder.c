@@ -18,6 +18,7 @@ Abstract:
 #endif
 #include "picotls.h"
 #include "picotls/fusion.h"
+#include "intel-ipsec-mb.h"
 
 #ifdef QUIC_FUZZER
 
@@ -1134,15 +1135,15 @@ void QuicCryptoBatchCallback(void* data)
     }
 }
 
-#if 0
+#if 1
 static void hexdump(const char *title, const uint8_t *p, size_t l)
 {
-//#define DEBUG_DUMP
+    // #define DEBUG_DUMP
     title = title;
     p = p;
     l = l;
 
-#ifdef DEBUG_DUMP
+    // #ifdef DEBUG_DUMP
     printf("%s (%zu bytes):\n", title, l);
 
     while (l != 0) {
@@ -1155,12 +1156,50 @@ static void hexdump(const char *title, const uint8_t *p, size_t l)
         }
         printf("\n");
     }
-#endif
+    // #endif
 }
 #endif
 
+#include <intel-ipsec-mb.h>
+#define KEY_SIZE 16
+#define IV_SIZE 12
+#define AUTH_TAG_LEN 16
+#define DATA_SIZE 1024
 
-int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t* pkey);
+int ipsecmb_test(IMB_MGR *p_mgr)
+{
+    uint8_t key[KEY_SIZE] = {0x66};
+    uint8_t iv[IV_SIZE] = {0x33};
+    uint8_t src_data[DATA_SIZE] = {0x11};
+    uint8_t dst_data[DATA_SIZE + 16] = {0x22};
+    uint8_t aad[16] = {0x44};
+    uint8_t *tag = &dst_data[DATA_SIZE];
+
+    struct gcm_key_data gdata_key;
+    memset(&gdata_key, 0, sizeof(struct gcm_key_data));
+    IMB_AES128_GCM_PRE(p_mgr, &key, &gdata_key);
+
+    void *src_ptr_array = &src_data;
+    void *dst_ptr_array = &dst_data;
+    uint64_t len_array = DATA_SIZE;
+    void *iv_ptr_array = &iv;
+    void *aad_ptr_array = &aad;
+    uint64_t aad_len = 16;
+    void *tag_ptr_array = &tag;
+    uint64_t tag_len = 16;
+    uint64_t num_packets = 1;
+
+    hexdump("src", src_data, DATA_SIZE);
+    printf("imb_get_errno 1 returns %d\n", imb_get_errno(p_mgr));
+    imb_quic_aes_gcm(p_mgr, &gdata_key, 16, IMB_DIR_ENCRYPT, (void **)&dst_ptr_array, (const void *const *)&src_ptr_array,
+                     &len_array, (const void *const *)&iv_ptr_array, (const void *const *)&aad_ptr_array, aad_len, (void **)&tag_ptr_array, tag_len, num_packets);
+    hexdump("dst", dst_data, DATA_SIZE);
+    printf("imb_get_errno 2 returns %d\n", imb_get_errno(p_mgr));
+
+    return 0;
+}
+
+int32_t _asynQatQuicSetKey(void *sessionCtx, uint8_t *pkey);
 
 QUIC_STATUS CxPlatSocketSet(
     _In_ const CXPLAT_ROUTE* Route,
@@ -1171,9 +1210,103 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     _Inout_ QUIC_PACKET_BUILDER *Builder)
 {
     Builder = Builder;
+    if (Builder->BCQuicAmount == 0)
+        return;
+
+//#define BATCH_WITH_IPSEMB
+#ifdef BATCH_WITH_IPSEMB
+    if (Builder->Connection->keySet == 0)
+    {
+        memset(Builder->Connection->gdata_key, 0, sizeof(struct gcm_key_data));
+        hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 32);
+        IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr, &Builder->Key->pk, Builder->Connection->gdata_key);
+        Builder->Connection->keySet = 1;
+    }
+
+    void *src_ptr_array[64] = {0};
+    void *dst_ptr_array[64] = {0};
+    uint64_t len_array[64] = {0};
+    void *iv_ptr_array[64] = {0};
+    void *aad_ptr_array[64] = {0};
+    void *tag_ptr_array[64] = {0};
+    uint64_t aad_len = Builder->HeaderLength;
+    uint64_t tag_len = 16;
+    uint64_t num_packets = Builder->BCQuicAmount;
 
     for (int i = 0; i < Builder->BCQuicAmount; i++)
     {
+        src_ptr_array[i] = Builder->BCQuicPayload[i];
+        dst_ptr_array[i] = Builder->BCQuicPayload[i];
+        len_array[i] = Builder->BCQuicPayloadLength[i] - 16;
+        iv_ptr_array[i] = (void *)((uint64_t)&Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+        aad_ptr_array[i] = Builder->BCQuicHdr[i];
+        tag_ptr_array[i] = (void *)((uint64_t)Builder->BCQuicPayload[i] + Builder->BCQuicPayloadLength[i] - 16);
+    }
+    //printf ("aes-gcm batch size %d\n", Builder->BCQuicAmount);
+
+    imb_quic_aes_gcm((IMB_MGR *)Builder->Connection->p_mgr, Builder->Connection->gdata_key, IMB_KEY_128_BYTES, IMB_DIR_ENCRYPT,
+                     (void **)&dst_ptr_array, (const void *const *)&src_ptr_array,
+                     (const uint64_t *)&len_array, (const void *const *)&iv_ptr_array, (const void *const *)&aad_ptr_array,
+                     aad_len, (void **)&tag_ptr_array, tag_len, num_packets);
+
+
+    for (int i = 0; i < Builder->BCQuicAmount; i++)
+    {
+        uint8_t HpMask[128];
+        uint8_t *Header = Builder->BCQuicHdr[i];
+        uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+
+        #ifndef QUIC_BYPASS_HP
+            CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
+        #else
+            CxPlatCopyMemory(HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
+        #endif
+
+        Header[0] ^= (HpMask[0] & 0x1f); // Bottom 5 bits for SH
+
+        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+        {
+            Header += 1 + Builder->Path->DestCid->CID.Length;
+        }
+        else
+        {
+            assert(0);
+            Header = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        }
+
+        for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j)
+        {
+            Header[j] ^= HpMask[1 + j];
+        }
+    }
+    /* 9.86Gbps/2T1C, ipsecmb encryption + bypass hp
+        Children      Self  Shared Object           
+    +   63.87%     0.00%  [unknown]               
+    +   48.03%    47.15%  libmsquic.so.2.2.0      
+    +   27.01%    12.32%  libc-2.28.so            
+    -   24.09%    24.09%  [kernel.kallsyms]       
+    - 23.03% 0                                 
+        + 11.61% read                           
+        + 6.34% 0x7f800000001c                  
+        + 4.60% 0x1c                            
+    + 1.04% recvmmsg                           
+    -   14.70%     3.76%  libpthread-2.28.so      
+    + 10.95% __libc_sendmsg                    
+    + 0.86% 0xec83485355544155                 
+    +   10.98%    10.98%  libIPSec_MB.so.1.4.0-dev
+    +    1.71%     1.68%  [vdso]                  
+        0.03%     0.03%  quicinteropserver       
+        0.00%     0.00%  perf                    
+    */
+
+    Builder->BCQuicAmount = 0;
+    return;
+
+#endif // End of BATCH_WITH_IPSECMB
+
+    for (int i = 0; i < Builder->BCQuicAmount; i++)
+    {
+        //printf ("aes-gcm batch size %d\n", Builder->BCQuicAmount);
 #ifndef QUIC_BYPASS_CRYPTO
 
 #ifdef QUIC_ASYNC_CRYPTO
@@ -1188,39 +1321,39 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
 
         // 9.07Gbps/2T1C, qat encryption + bypass hp
         /*
-        0.00%  [unknown]                           
-        +   42.84%    41.87%  libmsquic.so.2.2.0    
-        -   32.48%    19.38%  libc-2.28.so          
-        + 10.41% read                            
-            4.12% __memmove_avx_unaligned_erms     
-        + 4.07% 0x58300000000                    
-        + 1.29% clock_gettime@GLIBC_2.2.5        
-        + 0.90% recvmmsg                         
-            0.53% _int_malloc                      
-        -   22.61%    22.61%  [kernel.kallsyms]     
-        - 21.37% 0                               
-            - 10.57% 0x7f690000001c               
-                + 10.56% __libc_sendmsg            
-            + 10.40% read                         
-        + 0.88% recvmmsg                         
-        +   14.11%     3.51%  libpthread-2.28.so    
-        +    5.11%     5.08%  libqat_s.so           
-        +    4.92%     4.90%  libquic_crypto_s.so   
-        +    1.44%     1.44%  [vdso]                
-            1.14%     1.14%  libusdm_drv_s.so      
-            0.07%     0.07%  quicinteropserver     
-            0.00%     0.00%  perf            
+        0.00%  [unknown]
+        +   42.84%    41.87%  libmsquic.so.2.2.0
+        -   32.48%    19.38%  libc-2.28.so
+        + 10.41% read
+            4.12% __memmove_avx_unaligned_erms
+        + 4.07% 0x58300000000
+        + 1.29% clock_gettime@GLIBC_2.2.5
+        + 0.90% recvmmsg
+            0.53% _int_malloc
+        -   22.61%    22.61%  [kernel.kallsyms]
+        - 21.37% 0
+            - 10.57% 0x7f690000001c
+                + 10.56% __libc_sendmsg
+            + 10.40% read
+        + 0.88% recvmmsg
+        +   14.11%     3.51%  libpthread-2.28.so
+        +    5.11%     5.08%  libqat_s.so
+        +    4.92%     4.90%  libquic_crypto_s.so
+        +    1.44%     1.44%  [vdso]
+            1.14%     1.14%  libusdm_drv_s.so
+            0.07%     0.07%  quicinteropserver
+            0.00%     0.00%  perf
         */
         _asynQatQuicEncrypt(Builder->Connection->Worker->cyInstHandleX, Builder->Connection->sessionCtx,
-            Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
-            Builder->BCQuicHdr[i], Builder->HeaderLength,
+                            Builder->Key->pk, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+                            Builder->BCQuicHdr[i], Builder->HeaderLength,
             Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i] ,
             //Builder->Key->hk,
             (uint8_t*)Builder->Key->HeaderKey, // key format used by OpenSSL
-            (i == Builder->BCQuicAmount - 1) ? CPA_TRUE : CPA_FALSE,
-            Builder->SendData,
-            Builder->PacketNumberLength,
-            Builder->Path->DestCid->CID.Length);
+                            (i == Builder->BCQuicAmount - 1) ? CPA_TRUE : CPA_FALSE,
+                            Builder->SendData,
+                            Builder->PacketNumberLength,
+                            Builder->Path->DestCid->CID.Length);
 
         // async mode
         if (i == Builder->BCQuicAmount - 1)
@@ -1234,32 +1367,93 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
 
         uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
 
-#if 0
+#define IPSECMB_CRYPTO 1
+#if PICOTLS_CRYPTO
         // picotls crypto, functionality not ready yet
         static ptls_aead_context_t *aead = 0;
         if (aead == 0)
             aead = ptls_aead_new_direct(&ptls_fusion_aes128gcm, 1, Builder->Key->pk,
-                Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+                                        Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
 
         uint8_t encrypted[2000];
         ptls_aead_encrypt(aead, &encrypted, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i],
-            Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
-#else
-        CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
-                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
-                Builder->BCQuicPayload[i]);
-#endif
+                          Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
+#elif IPSECMB_CRYPTO
+        // ipsecmb_test(Builder->Connection->p_mgr);
 
-#if 0
-        // picotls crypto, functionality not ready yet
-        if (memcmp(encrypted, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]) != 0)
-            printf ("picotls has different crypto output (sn = %ld)\n", Builder->BCQuicSN[i]);
+        if (Builder->Connection->keySet == 0)
+        {
+            memset(Builder->Connection->gdata_key, 0, sizeof(struct gcm_key_data));
+            hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 16);
+            //hexdump("gcm_key_data ......(before setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
+            IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr, &Builder->Key->pk, Builder->Connection->gdata_key);
+            //hexdump("gcm_key_data ......(after setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
+            Builder->Connection->keySet = 1;
+        }
+
+        {
+            void *src_ptr_array = Builder->BCQuicPayload[i];
+            void *dst_ptr_array = Builder->BCQuicPayload[i];
+            uint64_t len_array = Builder->BCQuicPayloadLength[i] - 16;
+            void *iv_ptr_array = (void *)((uint64_t)&Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+            void *aad_ptr_array = Builder->BCQuicHdr[i];
+            uint64_t aad_len = Builder->HeaderLength;
+            void *tag_ptr_array = (void *)((uint64_t)Builder->BCQuicPayload[i] + Builder->BCQuicPayloadLength[i] - 16);
+            //printf ("Builder->BCQuicIV = %p, iv_ptr_array =%p, src_ptr_array = %p, Builder->BCQuicPayload[i] = %p, 
+            //len_array = %ld, aad_len = %ld, tag_ptr_array[0] = %p\n",
+            // &Builder->BCQuicIV, iv_ptr_array, src_ptr_array, 
+            // Builder->BCQuicPayload[i], len_array, aad_len, tag_ptr_array);
+            uint64_t tag_len = 16;
+            uint64_t num_packets = 1;
+
+            #if 0
+             uint8_t tmp_buf[2000];
+             tmp_buf[0] = tmp_buf[0];
+             memcpy (tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+            #endif
+
+            imb_quic_aes_gcm((IMB_MGR *)Builder->Connection->p_mgr, Builder->Connection->gdata_key, IMB_KEY_128_BYTES, IMB_DIR_ENCRYPT,
+                             (void **)&dst_ptr_array, (const void *const *)&src_ptr_array,
+                             &len_array, (const void *const *)&iv_ptr_array, (const void *const *)&aad_ptr_array,
+                             aad_len, (void **)&tag_ptr_array, tag_len, num_packets);
+            //printf("imb_get_errno returns %d\n", imb_get_errno((IMB_MGR *)Builder->Connection->p_mgr));
+        }
+        /* 9.89Gbps, 2T1C, aes-128-gcm, bypass-hp 
+                Children      Self  Shared Object
+        +   63.11%     0.00%  [unknown]
+        +   46.44%    45.35%  libmsquic.so.2.2.0
+        +   27.03%    11.92%  libc-2.28.so
+        +   25.15%    25.15%  [kernel.kallsyms]
+        +   15.19%     4.23%  libpthread-2.28.so
+        +   11.56%    11.53%  libIPSec_MB.so.1.4.0-dev
+        +    1.80%     1.80%  [vdso]
+            0.02%     0.02%  quicinteropserver
+            0.00%     0.00%  perf
+        */
+#else
+
+        //hexdump("src - default", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+        CxPlatEncrypt(Builder->Key->PacketKey, Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
+                      Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
+                      Builder->BCQuicPayload[i]);
+
+        #if 0
+        if (memcmp(tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]) != 0)
+        {
+            printf ("Crypto error happens (idex %d of total %d)\n", i, Builder->BCQuicAmount);
+            //hexdump("dst - ipsecmb", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+            //hexdump("dst - default (expected)", tmp_buf, Builder->BCQuicPayloadLength[i]);
+        }
         else
-            printf ("picotls crypto works well !!! \n");
+        {
+            printf ("Crypto good (idex %d of total %d)\n", i, Builder->BCQuicAmount);
+        }
+        #endif
 #endif
 
         uint8_t HpMask[128];
         uint8_t *Header = Builder->BCQuicHdr[i];
+        uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
 
 #ifndef QUIC_BYPASS_HP
         CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
@@ -1284,17 +1478,54 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
 #endif // QUIC_ASYNC_CRYPTO
 
 #else // QUIC_BYPASS_CRYPTO
-
-        uint8_t* PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
 
         // code use to evaluate crypto overhead
         uint8_t tmp_buf[2000];
         tmp_buf[0] = tmp_buf[0];
 
-        #if DUMMY_PICOTLS_CRYPTO
+#define DUMMY_IPSECMB_CRYPTO 1
+#if DUMMY_IPSECMB_CRYPTO
+        if (Builder->Connection->keySet == 0)
+        {
+            memset(Builder->Connection->gdata_key, 0, sizeof(struct gcm_key_data));
+            hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 32);
+            hexdump("gcm_key_data ......(before setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
+            IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr, &Builder->Key->pk, Builder->Connection->gdata_key);
+            hexdump("gcm_key_data ......(after setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
+            Builder->Connection->keySet = 1;
+        }
+
+        {
+            void *src_ptr_array = Builder->BCQuicPayload[i];
+            void *dst_ptr_array = Builder->BCQuicPayload[i];
+            uint64_t len_array = Builder->BCQuicPayloadLength[i] - 16;
+            void *iv_ptr_array = &Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i;
+            void *aad_ptr_array = Builder->BCQuicHdr[i];
+            uint64_t aad_len = Builder->HeaderLength;
+            void *tag_ptr_array = (void *)((uint64_t)Builder->BCQuicPayload[i] + Builder->BCQuicPayloadLength[i] - 16);
+            printf("Builder->BCQuicIV = %p, iv_ptr_array =%p, src_ptr_array = %p, Builder->BCQuicPayload[i] = %p, len_array = %ld, aad_len = %ld, tag_ptr_array[0] = %p\n",
+                   &Builder->BCQuicIV, iv_ptr_array, src_ptr_array, Builder->BCQuicPayload[i], len_array, aad_len, tag_ptr_array);
+            uint64_t tag_len = 16;
+            uint64_t num_packets = 1;
+
+            uint8_t tmp_buf[2000];
+            tmp_buf[0] = tmp_buf[0];
+            memcpy(tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+
+            hexdump("src - ipsecmb", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+            imb_quic_aes_gcm((IMB_MGR *)Builder->Connection->p_mgr, Builder->Connection->gdata_key, IMB_KEY_128_BYTES, IMB_DIR_ENCRYPT,
+                             (void **)&dst_ptr_array, (const void *const *)&src_ptr_array,
+                             &len_array, (const void *const *)&iv_ptr_array, (const void *const *)&aad_ptr_array,
+                             aad_len, (void **)&tag_ptr_array, tag_len, num_packets);
+            hexdump("dst - ipsecmb", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
+        }
+#endif
+
+#if DUMMY_PICOTLS_CRYPTO
         // picotls crypto
         // msquic 39%, fusion 24%, kernel 23%(read 12%, sendmsg 8%)
-        // 8.97Gbps/2T1C - 7.36Gbps/1T1C, 
+        // 8.97Gbps/2T1C - 7.36Gbps/1T1C,
         // picotls crypto(cycle cost included but result not verified), bypass HP
         /*
           Children      Self  Shared Object
@@ -1311,13 +1542,13 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         static ptls_aead_context_t *aead = 0;
         if (aead == 0)
             aead = ptls_aead_new_direct(&ptls_fusion_aes128gcm, 1, Builder->Key->pk,
-                Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
+                                        Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
 
         ptls_aead_encrypt(aead, &tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i],
-            Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
-        #endif
-        
-        #if DUMMY_QUICTLS_CRYPTO
+                          Builder->BCQuicSN[i], Builder->BCQuicHdr[i], Builder->HeaderLength);
+#endif
+
+#if DUMMY_QUICTLS_CRYPTO
         // quictls/openssl crypto
         // 7.23Gbps/2T1C
         // OpenSSL crypto(cycle cost included, additional memcpy for payload save/restore), bypass HP
@@ -1334,10 +1565,10 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         */
         memcpy (tmp_buf, Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
                 CxPlatEncrypt(Builder->Key->PacketKey,Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i,
-                Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
-                Builder->BCQuicPayload[i]);
+                      Builder->HeaderLength, Builder->BCQuicHdr[i], Builder->BCQuicPayloadLength[i],
+                      Builder->BCQuicPayload[i]);
         memcpy(Builder->BCQuicPayload[i], tmp_buf, Builder->BCQuicPayloadLength[i]);
-        #endif
+#endif
 
         // Or 11.4Gbps/2T1C, bypass crypto/hp
         // perf: read 12%, 10% sendmsg
