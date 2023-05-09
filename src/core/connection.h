@@ -646,7 +646,9 @@ typedef struct QUIC_CONNECTION {
 
     // ipsecmb manager
     void *p_mgr;
+    void *p_mgr_ext;
     void *gdata_key;
+    void *gdata_key_ext; // header protection
 
     uint32_t keySet; // set 1 if key provisioned
 

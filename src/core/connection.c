@@ -208,6 +208,8 @@ QuicConnAlloc(
     Connection->sessionCtx = 0;
     imb_conn_init((IMB_MGR **)&Connection->p_mgr);
     Connection->gdata_key = CxPlatAlloc(sizeof(struct gcm_key_data), 0);
+    imb_conn_init((IMB_MGR **)&Connection->p_mgr_ext);
+    Connection->gdata_key_ext = CxPlatAlloc(sizeof(struct gcm_key_data), 0);
 #ifdef QUIC_ASYNC_CRYPTO
     asyncQATQuicNewSession(Worker->cyInstHandleX, &Connection->sessionCtx);
     printf ("QuicConnAlloc, conn = %p, worker = %p, cypInstance = %p, sessionCtx = %p\n", Connection, Worker, Worker->cyInstHandleX, Connection->sessionCtx);
@@ -488,6 +490,11 @@ QuicConnFree(
     imb_conn_deinit(Connection->p_mgr);
     CxPlatFree(Connection->gdata_key, 0);
     Connection->gdata_key = 0;
+
+    imb_conn_deinit(Connection->p_mgr_ext);
+    CxPlatFree(Connection->gdata_key_ext, 0);
+    Connection->gdata_key_ext = 0;
+
     Connection->sessionCtx = 0;
     Connection->keySet = 0;
 

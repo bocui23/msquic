@@ -1213,13 +1213,18 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     if (Builder->BCQuicAmount == 0)
         return;
 
-//#define BATCH_WITH_IPSEMB
+#define BATCH_WITH_IPSEMB 1
 #ifdef BATCH_WITH_IPSEMB
     if (Builder->Connection->keySet == 0)
     {
         memset(Builder->Connection->gdata_key, 0, sizeof(struct gcm_key_data));
-        hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 32);
+        hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 16);
         IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr, &Builder->Key->pk, Builder->Connection->gdata_key);
+
+        memset(Builder->Connection->gdata_key_ext, 0, sizeof(struct gcm_key_data));
+        hexdump("hp key string", (const uint8_t *)Builder->Key->hk, 16);
+        IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr_ext, &Builder->Key->hk, Builder->Connection->gdata_key_ext);
+
         Builder->Connection->keySet = 1;
     }
 
@@ -1232,6 +1237,8 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
     uint64_t aad_len = Builder->HeaderLength;
     uint64_t tag_len = 16;
     uint64_t num_packets = Builder->BCQuicAmount;
+    uint8_t HpMask[64 * 8] = {0};
+    void *hp_dst_arrary[64] ={0};
 
     for (int i = 0; i < Builder->BCQuicAmount; i++)
     {
@@ -1241,6 +1248,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         iv_ptr_array[i] = (void *)((uint64_t)&Builder->BCQuicIV + CXPLAT_MAX_IV_LENGTH * i);
         aad_ptr_array[i] = Builder->BCQuicHdr[i];
         tag_ptr_array[i] = (void *)((uint64_t)Builder->BCQuicPayload[i] + Builder->BCQuicPayloadLength[i] - 16);
+        hp_dst_arrary[i] = (void *)((uint64_t)&HpMask + 8 * i);
     }
     //printf ("aes-gcm batch size %d\n", Builder->BCQuicAmount);
 
@@ -1248,37 +1256,6 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
                      (void **)&dst_ptr_array, (const void *const *)&src_ptr_array,
                      (const uint64_t *)&len_array, (const void *const *)&iv_ptr_array, (const void *const *)&aad_ptr_array,
                      aad_len, (void **)&tag_ptr_array, tag_len, num_packets);
-
-
-    for (int i = 0; i < Builder->BCQuicAmount; i++)
-    {
-        uint8_t HpMask[128];
-        uint8_t *Header = Builder->BCQuicHdr[i];
-        uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
-
-        #ifndef QUIC_BYPASS_HP
-            CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
-        #else
-            CxPlatCopyMemory(HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
-        #endif
-
-        Header[0] ^= (HpMask[0] & 0x1f); // Bottom 5 bits for SH
-
-        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
-        {
-            Header += 1 + Builder->Path->DestCid->CID.Length;
-        }
-        else
-        {
-            assert(0);
-            Header = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
-        }
-
-        for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j)
-        {
-            Header[j] ^= HpMask[1 + j];
-        }
-    }
     /* 9.86Gbps/2T1C, ipsecmb encryption + bypass hp
         Children      Self  Shared Object           
     +   63.87%     0.00%  [unknown]               
@@ -1298,6 +1275,52 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         0.03%     0.03%  quicinteropserver       
         0.00%     0.00%  perf                    
     */
+
+#ifndef QUIC_BYPASS_HP
+    imb_quic_hp_aes_ecb((IMB_MGR *)Builder->Connection->p_mgr_ext, Builder->Connection->gdata_key_ext,
+        (void **)&hp_dst_arrary, (const void * const*)&src_ptr_array, num_packets, IMB_KEY_128_BYTES);
+    //printf ("imb_quic_hp_aes_ecb output  0x%02x    0x%08x \n", HpMask[0], *(unsigned int *)(&HpMask[1]));
+
+    /* 9.9Gbps, ipsecmb encryption + ipsecmb batch hp 
+    Children      Self  Shared Object
+    +   63.76%     0.00%  [unknown]
+    +   47.44%    46.39%  libmsquic.so.2.2.0
+    +   26.56%    13.04%  libc-2.28.so
+    +   23.38%    23.38%  [kernel.kallsyms]
+    +   15.20%     3.81%  libpthread-2.28.so
+    +   11.61%    11.60%  libIPSec_MB.so.1.4.0-dev
+    +    1.76%     1.76%  [vdso]
+        0.01%     0.01%  quicinteropserver
+        0.00%     0.00%  perf
+    */
+#endif
+
+    for (int i = 0; i < Builder->BCQuicAmount; i++)
+    {
+        uint8_t *Header = Builder->BCQuicHdr[i];
+        //uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+
+        #ifdef QUIC_BYPASS_HP
+            CxPlatCopyMemory(hp_dst_arrary[i], PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
+        #endif
+
+        Header[0] ^= ((*(uint8_t *)hp_dst_arrary[i]) & 0x1f); // Bottom 5 bits for SH
+
+        if (Builder->PacketType == SEND_PACKET_SHORT_HEADER_TYPE)
+        {
+            Header += 1 + Builder->Path->DestCid->CID.Length;
+        }
+        else
+        {
+            assert(0);
+            Header = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        }
+
+        for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j)
+        {
+            Header[j] ^= *((uint8_t *)hp_dst_arrary[i] + 1 + j);
+        }
+    }
 
     Builder->BCQuicAmount = 0;
     return;
@@ -1385,9 +1408,12 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         {
             memset(Builder->Connection->gdata_key, 0, sizeof(struct gcm_key_data));
             hexdump("gcm key string", (const uint8_t *)Builder->Key->pk, 16);
-            //hexdump("gcm_key_data ......(before setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
             IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr, &Builder->Key->pk, Builder->Connection->gdata_key);
-            //hexdump("gcm_key_data ......(after setup)", Builder->Connection->gdata_key, sizeof(struct gcm_key_data));
+
+            memset(Builder->Connection->gdata_key_ext, 0, sizeof(struct gcm_key_data));
+            hexdump("hp key string", (const uint8_t *)Builder->Key->hk, 16);
+            IMB_AES128_GCM_PRE((IMB_MGR *)Builder->Connection->p_mgr_ext, &Builder->Key->hk, Builder->Connection->gdata_key_ext); 
+
             Builder->Connection->keySet = 1;
         }
 
@@ -1430,6 +1456,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
             0.02%     0.02%  quicinteropserver
             0.00%     0.00%  perf
         */
+
 #else
 
         //hexdump("src - default", Builder->BCQuicPayload[i], Builder->BCQuicPayloadLength[i]);
@@ -1453,10 +1480,25 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
 
         uint8_t HpMask[128];
         uint8_t *Header = Builder->BCQuicHdr[i];
-        uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
+        //uint8_t *PnStart = Builder->BCQuicPayload[i] - Builder->PacketNumberLength;
 
 #ifndef QUIC_BYPASS_HP
+#ifdef IPSECMB_CRYPTO
+        {
+            void *src_ptr_array = PnStart + 4;
+            void *dst_ptr_array = &HpMask;
+            IMB_KEY_SIZE_BYTES key_size = IMB_KEY_128_BYTES;
+            uint64_t num_packets = 1;
+
+            imb_quic_hp_aes_ecb((IMB_MGR *)Builder->Connection->p_mgr_ext, Builder->Connection->gdata_key_ext,
+            //imb_quic_hp_aes_ecb((IMB_MGR *)Builder->Connection->p_mgr_ext, Builder->Connection->gdata_key,
+                &dst_ptr_array, (const void * const*)&src_ptr_array, num_packets, key_size);
+            //printf ("imb_quic_hp_aes_ecb output  0x%02x    0x%08x \n", HpMask[0], *(unsigned int *)(&HpMask[1]));
+        }
+#else
         CxPlatHpComputeMask(Builder->Key->HeaderKey, 1, PnStart + 4, HpMask);
+        printf ("CxPlatHpComputeMask output 0x%02x    0x%08x\n", HpMask[0], *(unsigned int *)(&HpMask[1]));
+#endif
 #else
         CxPlatCopyMemory(HpMask, PnStart + 4, CXPLAT_HP_SAMPLE_LENGTH);
 #endif
@@ -1475,6 +1517,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL) void QuicPacketBuilderCryptoBatch(
         for (uint8_t j = 0; j < Builder->PacketNumberLength; ++j) {
             Header[j] ^= HpMask[1 + j];
         }
+
 #endif // QUIC_ASYNC_CRYPTO
 
 #else // QUIC_BYPASS_CRYPTO
