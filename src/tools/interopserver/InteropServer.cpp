@@ -241,6 +241,8 @@ HttpRequest::Process()
         return;
     }
 
+    static int log_counter = 0;
+    if (log_counter++ % 100000 == 0)
     printf("[%s] GET '%s'\n", GetRemoteAddr(MsQuic, QuicStream).Address, PathStart);
     File = fopen(FullFilePath, "rb"); // In case of failure, SendData still works.
 

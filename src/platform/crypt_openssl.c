@@ -318,6 +318,7 @@ CxPlatKeyCreate(
         goto Exit;
     }
 
+    printf("AeadType = %d\n", AeadType);
     switch (AeadType) {
     case CXPLAT_AEAD_AES_128_GCM:
         Aead = CXPLAT_AES_128_GCM_ALG_HANDLE;
