@@ -463,6 +463,9 @@ GetServerConfigurationFromArgs(
     const QUIC_CREDENTIAL_CONFIG* Config = &Helper.CredConfig;
     Helper.CredConfig.Flags = QUIC_CREDENTIAL_FLAG_NONE;
 
+    //Helper.CredConfig.Flags |= QUIC_CREDENTIAL_FLAG_SET_ALLOWED_CIPHER_SUITES;
+    //Helper.CredConfig.AllowedCipherSuites = (QUIC_ALLOWED_CIPHER_SUITE_FLAGS)2;
+
     const char* Cert;
     const char* KeyFile;
 
@@ -536,6 +539,8 @@ GetServerConfigurationFromArgs(
         CxPlatFreeSelfSignedCert(Config);
     }
 #endif
+    Helper.CredConfig.Flags |= QUIC_CREDENTIAL_FLAG_SET_ALLOWED_CIPHER_SUITES;
+    Helper.CredConfig.AllowedCipherSuites = (QUIC_ALLOWED_CIPHER_SUITE_FLAGS)2;
 
     return Configuration;
 }

@@ -11,10 +11,18 @@ Abstract:
 
 #include "RpsClient.h"
 
+#include <unistd.h>
+#include <signal.h>
 #ifdef QUIC_CLOG
 #include "RpsClient.cpp.clog.h"
 #endif
 
+#define Debug 1
+#define SERIAL_PARALLEL_MODE 0 //<0/1>  0:Means parallel; 1:SERIAL
+unsigned int total_request = 0; // runtime &request_total_send
+unsigned int total_response = 0; //in runtime
+unsigned int request_complete = 0; //per second request Tx speed
+unsigned int response_complete = 0; //similar to standard RPS, successful responses per second
 static
 void
 PrintHelp(
@@ -40,6 +48,7 @@ PrintHelp(
         "  -affinitize:<0/1>           Affinitizes threads to a core. (def:0)\n"
         "  -sendbuf:<0/1>              Whether to use send buffering. (def:0)\n"
         "  -stats:<0/1>                Indicates connection stats should be printed at the end of the run. (def:0)\n"
+        "  -url:GET/filename           A GET/filename path\n"
         "\n",
         RPS_MAX_CLIENT_PORT_COUNT,
         RPS_DEFAULT_RUN_TIME,
@@ -48,6 +57,19 @@ PrintHelp(
         RPS_DEFAULT_REQUEST_LENGTH,
         RPS_DEFAULT_RESPONSE_LENGTH
         );
+}
+
+void timer(int sig)
+{
+    static int cnt = 0;
+    cnt ++;
+    if(SIGALRM == sig){
+        WriteOutput("timer call = %d : response_complete=%d request_complete=%d\n",cnt ,response_complete,request_complete);
+        WriteOutput("total_request=%d in runtime:tal_response=%d\n\n",total_request,total_response);//实际完成的请求resopnse
+        response_complete = 0;
+        request_complete = 0;
+        alarm(1);
+    }
 }
 
 QUIC_STATUS
@@ -160,17 +182,45 @@ RpsClient::Init(
         WorkerCount = ThreadCount;
     }
 
-    RequestBuffer.Buffer = (QUIC_BUFFER*)CXPLAT_ALLOC_NONPAGED(sizeof(QUIC_BUFFER) + sizeof(uint64_t) + RequestLength, QUIC_POOL_PERF);
-    if (!RequestBuffer.Buffer) {
-        return QUIC_STATUS_OUT_OF_MEMORY;
-    }
-    RequestBuffer.Buffer->Length = sizeof(uint64_t) + RequestLength;
-    RequestBuffer.Buffer->Buffer = (uint8_t*)(RequestBuffer.Buffer + 1);
-    *(uint64_t*)(RequestBuffer.Buffer->Buffer) = CxPlatByteSwapUint64(ResponseLength);
-    for (uint32_t i = 0; i < RequestLength; ++i) {
-        RequestBuffer.Buffer->Buffer[sizeof(uint64_t) + i] = (uint8_t)i;
-    }
+    #if GET_FILE
+        const char* Url = nullptr;
+        char newUrl[64] = {0};
+        TryGetValue(argc, argv, "url", &Url);
+        if ( Url == nullptr || strncmp(Url, "GET", 3) != 0){
+	    WriteOutput("The current mode is URL request mode,please intput the -url:GET/filename parameter\n");
+            exit(1);
+        }
+        for(size_t i=0 ,j=0; i<strlen(Url); i++,j++){
+            newUrl[i] = Url[j];
+            if(Url[j] == '/') {
+                newUrl[i] = ' ';
+                do{
+                    newUrl[++i] = Url[j++];
+                }while( j < strlen(Url) );
+            }
+        }
+        RequestBuffer.Buffer = (QUIC_BUFFER*)CXPLAT_ALLOC_NONPAGED(sizeof(QUIC_BUFFER) + strlen(newUrl) + RequestLength, QUIC_POOL_PERF);
+        if (!RequestBuffer.Buffer) {
+            return QUIC_STATUS_OUT_OF_MEMORY;
+        }
 
+        RequestBuffer.Buffer->Length = strlen(newUrl);
+        RequestBuffer.Buffer->Buffer = (uint8_t*)(RequestBuffer.Buffer + 1);
+        memcpy(RequestBuffer.Buffer->Buffer, newUrl, strlen(newUrl));
+        RequestBuffer.Buffer->Buffer[strlen(newUrl)] = '\0';
+        WriteOutput("RequestBuffer.Buffer->Buffer==%s\n",RequestBuffer.Buffer->Buffer);
+    #else
+        RequestBuffer.Buffer = (QUIC_BUFFER*)CXPLAT_ALLOC_NONPAGED(sizeof(QUIC_BUFFER) + sizeof(uint64_t) + RequestLength, QUIC_POOL_PERF);
+        if (!RequestBuffer.Buffer) {
+            return QUIC_STATUS_OUT_OF_MEMORY;
+        }
+        RequestBuffer.Buffer->Length = sizeof(uint64_t) + RequestLength;
+        RequestBuffer.Buffer->Buffer = (uint8_t*)(RequestBuffer.Buffer + 1);
+        *(uint64_t*)(RequestBuffer.Buffer->Buffer) = CxPlatByteSwapUint64(ResponseLength);
+        for (uint32_t i = 0 ; i < RequestLength ; ++i) {
+            RequestBuffer.Buffer->Buffer[sizeof(uint64_t) + i ] = (uint8_t)i;
+        }
+    #endif
     MaxLatencyIndex = ((uint64_t)RunTime / 1000) * RPS_MAX_REQUESTS_PER_SECOND;
     if (MaxLatencyIndex > (UINT32_MAX / sizeof(uint32_t))) {
         MaxLatencyIndex = UINT32_MAX / sizeof(uint32_t);
@@ -191,6 +241,10 @@ CXPLAT_THREAD_CALLBACK(RpsWorkerThread, Context)
 {
     auto Worker = (RpsWorkerContext*)Context;
 
+#if Debug
+    signal(SIGALRM, timer);
+    alarm(1);
+#endif
     while (Worker->Client->Running) {
         while (Worker->RequestCount != 0) {
             InterlockedDecrement((long*)&Worker->RequestCount);
@@ -469,6 +523,8 @@ RpsConnectionContext::StreamCallback(
             uint64_t ToPlaceIndex = (uint64_t)InterlockedIncrement64((int64_t*)&Worker->Client->CompletedRequests) - 1;
             uint64_t EndTime = CxPlatTimeUs64();
             uint64_t Delta = CxPlatTimeDiff64(StrmContext->StartTime, EndTime);
+            InterlockedIncrement64((int64_t*)&total_response); //实际完成的response请求。
+            InterlockedIncrement64((int64_t*)&response_complete);
             if (ToPlaceIndex < Worker->Client->MaxLatencyIndex) {
                 if (Delta > UINT32_MAX) {
                     Delta = UINT32_MAX;
@@ -479,6 +535,7 @@ RpsConnectionContext::StreamCallback(
         break;
     case QUIC_STREAM_EVENT_SEND_COMPLETE:
         InterlockedIncrement64((int64_t*)&Worker->Client->SendCompletedRequests);
+        InterlockedIncrement64((int64_t*)&request_complete);
         break;
     case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
     case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
@@ -491,7 +548,8 @@ RpsConnectionContext::StreamCallback(
     case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
         Worker->Client->StreamContextAllocator.Free(StrmContext);
         MsQuic->StreamClose(StreamHandle);
-        Worker->QueueSendRequest();
+        if ( SERIAL_PARALLEL_MODE == 0 )
+            Worker->QueueSendRequest();
         break;
     default:
         break;
@@ -524,6 +582,7 @@ RpsConnectionContext::SendRequest(bool DelaySend) {
             StrmContext,
             &Stream))) {
         InterlockedIncrement64((int64_t*)&Worker->Client->StartedRequests);
+        InterlockedIncrement64((int64_t*)&total_request);
         QUIC_SEND_FLAGS Flags = QUIC_SEND_FLAG_START | QUIC_SEND_FLAG_FIN;
         if (DelaySend) {
             Flags |= QUIC_SEND_FLAG_DELAY_SEND;
@@ -547,8 +606,18 @@ void
 RpsWorkerContext::QueueSendRequest() {
     if (Client->Running) {
         if (ThreadStarted && !Client->SendInline) {
+            #if SERIAL_PARALLEL_MODE
+                do{
+                    sched_yield();
+                }
+                while(  RequestCount != Client->CompletedRequests);
+            #endif
             InterlockedIncrement((long*)&RequestCount);
-            CxPlatEventSet(WakeEvent);
+            #if SERIAL_PARALLEL_MODE
+                GetConnection()->SendRequest(RequestCount != 0);
+            #else
+                CxPlatEventSet(WakeEvent);
+            #endif
         } else {
             GetConnection()->SendRequest(false); // Inline if thread isn't running
         }

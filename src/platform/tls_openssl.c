@@ -1133,7 +1133,8 @@ CxPlatTlsSecConfigCreate(
         //
         uint8_t CipherSuiteStringLength = 0;
         uint8_t AllowedCipherSuitesCount = 0;
-        if (CredConfig->AllowedCipherSuites & QUIC_ALLOWED_CIPHER_SUITE_AES_128_GCM_SHA256) {
+
+	if (CredConfig->AllowedCipherSuites & QUIC_ALLOWED_CIPHER_SUITE_AES_128_GCM_SHA256) {
             CipherSuiteStringLength += (uint8_t)sizeof(CXPLAT_TLS_AES_128_GCM_SHA256);
             AllowedCipherSuitesCount++;
         }

@@ -12,7 +12,12 @@ Abstract:
 
 #pragma once
 
+#define GET_FILE 1 //<0/1>  0:Means Non URL request ; 1:URL request
+#if GET_FILE
+#define PERF_ALPN                           "hq-interop"
+#else
 #define PERF_ALPN                           "perf"
+#endif
 #define PERF_DEFAULT_PORT                   4433
 #define PERF_DEFAULT_DISCONNECT_TIMEOUT     (10 * 1000)
 #define PERF_DEFAULT_IDLE_TIMEOUT           (30 * 1000)

@@ -20,9 +20,9 @@ Abstract:
 extern "C" {
 #endif
 
-#define QUIC_BATCH_CRYPTO_HP
+//#define QUIC_BATCH_CRYPTO_HP
 //#define QUIC_BYPASS_CRYPTO
-//#define QUIC_BYPASS_HP
+#define QUIC_BYPASS_HP
 
 //#define dbg_printf(...) printf(__VA_ARGS__)
 #define dbg_printf(...)

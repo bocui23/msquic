@@ -442,6 +442,8 @@ main(
         SelfSignedCredConfig->Flags |= QUIC_CREDENTIAL_FLAG_SET_ALLOWED_CIPHER_SUITES;
         SelfSignedCredConfig->AllowedCipherSuites = (QUIC_ALLOWED_CIPHER_SUITE_FLAGS)CipherSuite;
     }
+    printf("SelfSignedCredConfig->AllowedCipherSuites = %d\n", SelfSignedCredConfig->AllowedCipherSuites);
+    assert(1);
 
     if (DriverName != nullptr) {
 #if defined(_WIN32) && !defined(QUIC_RESTRICTED_BUILD)
