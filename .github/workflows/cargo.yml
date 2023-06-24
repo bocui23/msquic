@@ -21,7 +21,7 @@ jobs:
     name: Cargo
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@03bee3930647ebbf994244c21ddbc0d4933aab4f
+      uses: step-security/harden-runner@55d479fb1c5bcad5a4f9099a5d9f37c8857b2845
       with:
         egress-policy: block
         allowed-endpoints: >
